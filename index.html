@@ -1,0 +1,203 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="description" content="How to use unix timestamps and GROUP BY sql clause to create a data graph with dynamic zoom.">
+    <meta name="author" content="Jesper Eklund">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.0.1/dist/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>    
+    <title>Smart Data Zoom</title>
+    <style>
+        body {
+            background-color: #cccccc;
+        }
+
+        p, span, div {
+            font-family: Verdana, Geneva, Tahoma, sans-serif;
+            font-size: 12px;
+        }
+        #chart {
+            width: 800px;
+            background-color: #ffffff;
+            padding: 6px;
+        }
+
+        #canvas {
+            cursor: col-resize;
+        }
+    
+        #indicator {
+            width: 800px;
+            height: 20px;
+            border-style: solid;
+            border-width: 1px;
+            border-color: gray;
+        }
+    
+        #innerbar {
+            width: 0px;
+            height: 20px;
+            border-style: none solid none solid;
+            border-width: 1px;
+            border-color: gray;
+            background-color:#48d900;
+        }
+    </style>
+</head>
+<body onload="init()">
+    <script>
+        const MIN              = 1526364000 // Tuesday 15. May 2018 06:00:00
+        const MAX              = 1642377600 // Monday 17. January 2022 00:00:00
+        const ZOOM             = 1 / 7      // wheel zoom factor
+        const SECS_PER_SAMPLE  = 3600       // sample is once an hour
+        const GROUPS_DEFAULT   = 50         // number of data points in graph
+        const MS_PER_DAY       = 24 * 60 * 60 * 1000
+        const MS_PER_HOUR      = 60 * 60 * 1000
+
+
+        let start = MIN
+        let end = MAX
+        let groups = GROUPS_DEFAULT
+
+        function init() {
+            this.chart.addEventListener('wheel',function(event){
+                const dir = (event.deltaY < 0) ? 1 : -1.25
+                const disp_x = (event.layerX - 156) / ( 800 - 156)
+                //const disp_x = event.layerX / 800
+                const norm_x = ( disp_x > 0 ) ? disp_x : 0
+                load(dir, norm_x)
+                event.preventDefault()
+            }, false)
+            load(0,0)
+        }
+
+        function load(dir, x) {
+            const dist = end - start
+            start += Math.round(x * dir * dist * ZOOM)
+            end -= Math.round((1 - x) * dir * dist * ZOOM)
+
+            start = ( start < MIN ) ? MIN : start
+            end = ( end > MAX ) ? MAX : end
+
+            if ( end - start < 2 * SECS_PER_SAMPLE ) {
+                start = end - 2 * SECS_PER_SAMPLE
+            }
+
+            const xInd = (start - MIN) / (MAX - MIN)
+            const wInd = (end - start) / (MAX - MIN)
+
+            //set zoom Indicator
+            innerbar.style.marginLeft = 800 * xInd
+            innerbar.style.width = 800 * wInd
+
+            //set message Label
+            const date1 = new Date(start * 1000)
+            const date2 = new Date(end * 1000)
+            const dateDiff = date2 - date1
+            message.innerHTML = `Period: ${date1.toDateString()} - ${date2.toDateString()}<br>Range: ${dhm(dateDiff)}`
+
+            loadDataAndChart()
+        }
+
+        async function loadDataAndChart() {
+            groups = range.value
+            const url = new URL(window.location.href + "btc.php?start="+start+"&end="+end+"&groups="+groups)
+            const response = await fetch(url.href)
+            const data = await response.json();
+            sql.innerHTML = `SQL statement:<br><pre> ${data.sql}</pre>`
+            loadChart(data)
+        }
+
+        function dhm(t){
+            let d = Math.floor(t / MS_PER_DAY)
+            let h = Math.floor( (t - d * MS_PER_DAY) / MS_PER_HOUR)
+            let m = Math.round( (t - d * MS_PER_DAY - h * MS_PER_HOUR) / 60000)
+            if(m === 60){
+              h++
+              m = 0
+            }
+            if(h === 24){
+              d++
+              h = 0
+            }
+            return `${d} day${d!=1?'s':''}, ${h} hour${h!=1?'s':''} ${m} min${m!=1?'s':''}`
+        }        
+
+        function loadChart(data) {
+            const ctx = canvas.getContext('2d')
+
+            if(window.graph != undefined) 
+            window.graph.destroy();
+
+            window.graph = new Chart(ctx, {
+                data: {
+                    labels: data.date,
+                    datasets: [{
+                        type: 'line',
+                        borderColor: '#ff0000',
+                        label: 'USD/BTC',
+                        yAxisID: 'btc',
+                        data: data.open,
+                        borderWidth: 1
+                    },{
+                        type: 'bar',
+                        borderColor: '#0000ff',
+                        label: 'USD Vol',
+                        yAxisID: 'vol_usd',
+                        data: data.volume_usd,
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    animation: {
+                        duration: 0
+                    }
+                    /*
+                    ,
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                parser: 'yyyy-MM-dd HH:mm:ss',
+                                unit: 'day',
+                                displayFormats: {
+                                    'day': 'MM/DD/YYYY'
+                                }
+
+                            }
+                        }
+                    } 
+                    */                   
+                }                       
+            })
+        }
+    </script>
+        <h2>Smart Data Zoom</h2>
+        <p style="width: 800px;">
+            <!--
+            How to use unix timestamp in a php/mysql-based floating zoomable data graph, that always shows the same number of data points, despites the zoom level.
+            The database contains 33000 aggregated BTC values and volumes from Bitstamp, one for every hour in about a four year period.
+            The start and end time and the number of received data points is specified in the requests from the client.
+            The SQL calculates the aggregated average and volume values for each group.
+            The green bar indicates the zoom level.
+            You can see the current SQL statement below the zoom bar.--></p>
+        <p><b>Use the mouse wheel</b> to zoom in and out in the graph:</p>
+    <div id="chart">
+        <span>Number of data points:</span>
+        <input style="width: 200;" type="range" min="10" max="500" value="50" id="range" 
+            oninput="(group_label.innerHTML = range.value)" 
+            onchange="loadDataAndChart()">
+        <span style="font-family: Arial, Helvetica, sans-serif;" id="group_label">50</span>
+        <canvas id="canvas"></canvas>
+        <br>
+        <div id="message"></div>
+        <br>
+        <div id="indicator">
+            <div id="innerbar"></div>
+        </div>
+        <br>
+        <div id="sql"></div>
+    </div>
+</body>
+</html>
