@@ -16,4 +16,4 @@ The resulting SQL statement is send back to the client at can be monitored as th
 
 To use the chart, use the mouse to point where to zoom and use the mouse wheel to zoom in and out.
 
-Open [SQL Grouping Data Zoom](https://jespereklund.dk/smart-data-zoom)
+Open [SQL Grouping Data Zoom](https://flettedehvaler.dk/smart_data_zoom)
